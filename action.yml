@@ -1,0 +1,125 @@
+# action.yml
+name: 'Vana Phala Deployment'
+description: 'Deploys a CVM to Phala Cloud using a Python script.'
+author: 'Volodymyr Isai <volod@opendatalabs.xyz>'
+branding:
+  icon: 'cloud-lightning'
+  color: 'purple'
+
+inputs:
+  phala-cloud-api-key:
+    description: 'The API key for authenticating with the Phala Cloud API.'
+    required: true
+  vm-name:
+    description: 'Name for the CVM. Defaults to the GitHub repository name if not provided.'
+    required: false
+  vm-id:
+    description: 'The ID of an existing VM to update. If provided, the action performs an update instead of creating a new VM.'
+    required: false
+  image:
+    description: 'The base image to use for the CVM (e.g., dstack-dev-0.3.5).'
+    required: false
+    default: 'dstack-dev-0.3.5'
+  docker-compose-file:
+    description: 'Path to the Docker Compose file for the TEE, relative to the root of the user repository.'
+    required: true
+    default: 'docker-compose.phala.yml'
+  docker-tag:
+    description: 'The tag for the Docker image specified in the compose file.'
+    required: false
+    default: 'latest'
+  prelaunch-script-file:
+    description: 'Optional path to a pre-launch script to be executed inside the CVM, relative to the root of the user repository.'
+    required: false
+  teepod-id:
+    description: 'Specific Teepod ID to deploy to. If omitted, an available one will be selected automatically.'
+    required: false
+  vcpu:
+    description: 'Number of virtual CPUs for the CVM.'
+    required: false
+    default: '2'
+  memory:
+    description: 'Memory in MB for the CVM.'
+    required: false
+    default: '8192'
+  disk-size:
+    description: 'Disk size in GB for the CVM.'
+    required: false
+    default: '40'
+  env-vars-from-secrets:
+    description: >
+      A JSON string mapping GitHub secret names to the desired environment variable names inside the CVM.
+      Example: '{"SECRET_API_KEY": "API_KEY", "SECRET_DB_PASS": "DB_PASSWORD"}'
+    required: false
+    default: '{}'
+
+outputs:
+  vm-id:
+    description: 'The ID of the created or updated CVM.'
+  vm-name:
+    description: 'The name of the CVM.'
+  status:
+    description: 'The final status of the deployment (e.g., "success", "failed").'
+  operation:
+    description: 'The operation performed ("create" or "update").'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout User Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'poetry'
+
+    - name: Install Action Dependencies
+      shell: bash
+      run: |
+        pip install poetry
+        poetry install --no-root
+      working-directory: ${{ github.action_path }}
+
+    - name: Prepare Environment Variables
+      id: prep_env
+      shell: bash
+      run: |
+        echo "Preparing environment variables..."
+        ENV_JSON='${{ inputs.env-vars-from-secrets }}'
+        ENV_FILE="action_env_mapping.env"
+        > "$ENV_FILE"
+
+        # The fromJson function ensures that the JSON is well-formed.
+        # This loop creates a mapping file where each line is TARGET_VAR_NAME=GITHUB_SECRET_NAME
+        for key in $(echo "$ENV_JSON" | jq -r 'keys[]'); do
+          value=$(echo "$ENV_JSON" | jq -r --arg k "$key" '.[$k]')
+          echo "$value=$key" >> "$ENV_FILE"
+        done
+        
+        echo "env-file-path=$ENV_FILE" >> $GITHUB_OUTPUT
+        echo "Created temporary env mapping file."
+
+    - name: Run Phala Deployment Script
+      id: deploy
+      shell: bash
+      env:
+        # Map all action inputs to environment variables for the Python script
+        PHALA_CLOUD_API_KEY: ${{ inputs.phala-cloud-api-key }}
+        INPUT_VM_NAME: ${{ inputs.vm-name || github.event.repository.name }}
+        INPUT_VM_ID: ${{ inputs.vm-id }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_DOCKER_COMPOSE_FILE: ${{ inputs.docker-compose-file }}
+        INPUT_DOCKER_TAG: ${{ inputs.docker-tag }}
+        INPUT_PRELAUNCH_SCRIPT_FILE: ${{ inputs.prelaunch-script-file }}
+        INPUT_TEEPOD_ID: ${{ inputs.teepod-id }}
+        INPUT_VCPU: ${{ inputs.vcpu }}
+        INPUT_MEMORY: ${{ inputs.memory }}
+        INPUT_DISK_SIZE: ${{ inputs.disk-size }}
+        INPUT_ENV_FILE_PATH: ${{ steps.prep_env.outputs.env-file-path }}
+        # Securely pass the actual secret values into the environment for this step
+        ${{ fromJson(inputs.env-vars-from-secrets) }}
+      run: |
+        # The Python script is part of the action's repository, so we reference it via github.action_path
+        poetry run python ${{ github.action_path }}/deploy_to_phala.py
