@@ -77,22 +77,22 @@ runs:
     - name: Install Action Dependencies
       shell: bash
       run: |
-        pip install poetry
-        poetry install --no-root
+        python -m pip install poetry
+        python -m poetry install --no-root
       working-directory: ${{ github.action_path }}
 
     - name: Run Phala Deployment Script
       id: deploy
       shell: bash
+      working-directory: ${{ github.action_path }}
       env:
-        # Map all action inputs to environment variables for the Python script.
         PHALA_CLOUD_API_KEY: ${{ inputs.phala-cloud-api-key }}
         INPUT_VM_NAME: ${{ inputs.vm-name || github.event.repository.name }}
         INPUT_VM_ID: ${{ inputs.vm-id }}
         INPUT_IMAGE: ${{ inputs.image }}
-        INPUT_DOCKER_COMPOSE_FILE: ${{ inputs.docker-compose-file }}
+        INPUT_DOCKER_COMPOSE_FILE: ${{ github.workspace }}/${{ inputs.docker-compose-file }}
         INPUT_DOCKER_TAG: ${{ inputs.docker-tag }}
-        INPUT_PRELAUNCH_SCRIPT_FILE: ${{ inputs.prelaunch-script-file }}
+        INPUT_PRELAUNCH_SCRIPT_FILE: ${{ github.workspace }}/${{ inputs.prelaunch-script-file }}
         INPUT_TEEPOD_ID: ${{ inputs.teepod-id }}
         INPUT_VCPU: ${{ inputs.vcpu }}
         INPUT_MEMORY: ${{ inputs.memory }}
@@ -100,4 +100,4 @@ runs:
         INPUT_ENV_VARS_TO_ENCRYPT: ${{ inputs.env-vars-to-encrypt }}
         # The calling workflow's 'env' block will add the actual secret values here.
       run: |
-        python -m poetry run python ${{ github.action_path }}/deploy_to_phala.py
+        python -m poetry run python deploy_to_phala.py
