@@ -46,12 +46,12 @@ inputs:
     description: 'Disk size in GB for the CVM.'
     required: false
     default: '40'
-  env-vars-from-secrets:
+  env-vars-to-encrypt:
     description: >
-      A JSON string mapping GitHub secret names to the desired environment variable names inside the CVM.
-      Example: '{"SECRET_API_KEY": "API_KEY", "SECRET_DB_PASS": "DB_PASSWORD"}'
+      A JSON array of environment variable names to be encrypted and passed to the CVM.
+      Example: '["API_KEY", "DB_PASSWORD"]'
     required: false
-    default: '{}'
+    default: '[]'
 
 outputs:
   vm-id:

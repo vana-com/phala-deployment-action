@@ -112,6 +112,34 @@ def read_file_content(file_path: str, purpose: str) -> str:
     except Exception as e:
         raise IOError(f"Error reading {purpose} file at {file_path}: {e}")
 
+def get_env_vars_from_secrets() -> List[Dict[str, str]]:
+    """
+    Collects environment variables specified by the 'env-vars-to-encrypt' input.
+    The action runner should place the secret values into the environment.
+    """
+    env_vars_to_collect_json = os.getenv("INPUT_ENV_VARS_TO_ENCRYPT", "[]")
+    try:
+        env_var_names = json.loads(env_vars_to_collect_json)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON format for 'env-vars-to-encrypt'. Please provide a valid JSON array.")
+
+    if not isinstance(env_var_names, list):
+        raise ValueError("'env-vars-to-encrypt' must be a JSON array of strings.")
+
+    encrypted_vars = []
+    print(f"Attempting to collect and encrypt {len(env_var_names)} specified environment variables...")
+
+    for name in env_var_names:
+        value = os.getenv(name)
+        if value:
+            encrypted_vars.append({"key": name, "value": value})
+            print(f"  - Found and added '{name}' for encryption.")
+        else:
+            print(f"  - Warning: Environment variable '{name}' was specified but not found in the env context.")
+
+    return encrypted_vars
+
+
 # --- Core Deployment Logic ---
 async def deploy(
         teepod_id: int,
@@ -141,7 +169,7 @@ async def deploy(
     }
 
     # Conditionally add the pre-launch script if the path is provided
-    if prelaunch_script_path:
+    if prelaunch_script_path and prelaunch_script_path.strip():
         print(f"Including pre-launch script from: {prelaunch_script_path}")
         pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
         compose_manifest["pre_launch_script"] = pre_launch_script_content
@@ -183,27 +211,6 @@ async def deploy(
     print("VM creation initiated successfully.")
     return response
 
-def get_env_vars_from_secrets() -> List[Dict[str, str]]:
-    """Collects environment variables from secrets passed into the action."""
-    env_vars = []
-    env_file_path = os.getenv("INPUT_ENV_FILE_PATH")
-
-    if not env_file_path or not os.path.exists(env_file_path):
-        print("No secret environment variables provided or mapping file not found.")
-        return env_vars
-
-    with open(env_file_path, 'r') as f:
-        for line in f:
-            if '=' in line:
-                target_var, secret_name = line.strip().split('=', 1)
-                secret_value = os.getenv(secret_name)
-                if secret_value:
-                    env_vars.append({"key": target_var, "value": secret_value})
-                else:
-                    print(f"Warning: Secret '{secret_name}' is not set in the workflow's env context.")
-
-    print(f"Collected {len(env_vars)} environment variables from secrets.")
-    return env_vars
 
 # --- Main Entry Point ---
 async def main():
@@ -215,7 +222,7 @@ async def main():
         image = os.getenv("INPUT_IMAGE")
         docker_compose_file = os.getenv("INPUT_DOCKER_COMPOSE_FILE")
         docker_tag = os.getenv("INPUT_DOCKER_TAG")
-        prelaunch_script_file = os.getenv("INPUT_PRELAUNCH_SCRIPT_FILE") # This can be empty or None
+        prelaunch_script_file = os.getenv("INPUT_PRELAUNCH_SCRIPT_FILE")  # This can be empty or None
         teepod_id_str = os.getenv("INPUT_TEEPOD_ID")
         vcpu = int(os.getenv("INPUT_VCPU", "2"))
         memory = int(os.getenv("INPUT_MEMORY", "8192"))
@@ -270,4 +277,7 @@ async def main():
         raise
 
 if __name__ == "__main__":
+    if not os.getenv("GITHUB_ACTIONS"):
+        print("Running in local mode. Please ensure necessary INPUT_* env vars are set for testing.")
+
     asyncio.run(main())
