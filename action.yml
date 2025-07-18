@@ -46,10 +46,13 @@ inputs:
     description: 'Disk size in GB for the CVM.'
     required: false
     default: '40'
-  env-vars-to-encrypt:
+  doppler-secrets-json:
+    description: 'A JSON string containing all secrets fetched from Doppler.'
+    required: true
+  exclude-env-vars:
     description: >
-      A JSON array of environment variable names to be encrypted and passed to the CVM.
-      Example: '["API_KEY", "DB_PASSWORD"]'
+      A JSON array of secret names from Doppler to exclude from CVM encryption.
+      Example: '["PHALA_VM_ID", "SOME_OTHER_SECRET"]'
     required: false
     default: '[]'
 
@@ -90,6 +93,7 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}
       env:
+        # Pass all inputs as environment variables to the Python script
         PHALA_CLOUD_API_KEY: ${{ inputs.phala-cloud-api-key }}
         INPUT_VM_NAME: ${{ inputs.vm-name || github.event.repository.name }}
         INPUT_VM_ID: ${{ inputs.vm-id }}
@@ -101,7 +105,8 @@ runs:
         INPUT_VCPU: ${{ inputs.vcpu }}
         INPUT_MEMORY: ${{ inputs.memory }}
         INPUT_DISK_SIZE: ${{ inputs.disk-size }}
-        INPUT_ENV_VARS_TO_ENCRYPT: ${{ inputs.env-vars-to-encrypt }}
-        # The calling workflow's 'env' block will add the actual secret values here.
+        # Pass the structured inputs
+        INPUT_DOPPLER_SECRETS_JSON: ${{ inputs.doppler-secrets-json }}
+        INPUT_EXCLUDE_ENV_VARS: ${{ inputs.exclude-env-vars }}
       run: |
         python -m poetry run python deploy_to_phala.py

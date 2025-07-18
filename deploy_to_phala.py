@@ -44,6 +44,17 @@ class PhalaCVMClient:
             timeout=timeout
         )
 
+    def _handle_error(self, e: httpx.HTTPStatusError):
+        """A centralized error handler for API requests."""
+        print(f"HTTP Error Status: {e.response.status_code}")
+        print(f"Full error response: {e.response.text}")
+        try:
+            error_details = e.response.json()
+            print(f"Error details: {json.dumps(error_details, indent=2)}")
+        except (json.JSONDecodeError, AttributeError):
+            print("Error response is not valid JSON.")
+        raise
+
     def get_pubkey(self, vm_config: Dict[str, Any]) -> Dict[str, str]:
         """Requests the public key needed to encrypt environment variables."""
         print("Requesting pubkey with the following configuration:")
@@ -53,14 +64,7 @@ class PhalaCVMClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            print(f"HTTP Error Status: {e.response.status_code}")
-            print(f"Full error response: {e.response.text}")
-            try:
-                error_details = e.response.json()
-                print(f"Error details: {json.dumps(error_details, indent=2)}")
-            except (json.JSONDecodeError, AttributeError):
-                print("Error response is not valid JSON.")
-            raise
+            self._handle_error(e)
 
     def create_vm(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Sends the request to create a new VM."""
@@ -133,32 +137,38 @@ def read_file_content(file_path: str, purpose: str) -> str:
     except Exception as e:
         raise IOError(f"Error reading {purpose} file at {file_path}: {e}")
 
-def get_env_vars_from_secrets() -> List[Dict[str, str]]:
+def get_env_vars_from_doppler_json() -> List[Dict[str, str]]:
     """
-    Collects environment variables specified by the 'env-vars-to-encrypt' input.
-    The action runner should place the secret values into the environment.
+    Parses the Doppler secrets JSON, excludes specified keys,
+    and formats the result for encryption.
     """
-    env_vars_to_collect_json = os.getenv("INPUT_ENV_VARS_TO_ENCRYPT", "[]")
+    secrets_json_str = os.getenv("INPUT_DOPPLER_SECRETS_JSON")
+    exclude_json_str = os.getenv("INPUT_EXCLUDE_ENV_VARS", "[]")
+
+    if not secrets_json_str:
+        print("Warning: No Doppler secrets JSON was provided.")
+        return []
+
     try:
-        env_var_names = json.loads(env_vars_to_collect_json)
-    except json.JSONDecodeError:
-        raise ValueError("Invalid JSON format for 'env-vars-to-encrypt'. Please provide a valid JSON array.")
+        secrets_dict = json.loads(secrets_json_str)
+        exclude_list = json.loads(exclude_json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format provided to the action: {e}")
 
-    if not isinstance(env_var_names, list):
-        raise ValueError("'env-vars-to-encrypt' must be a JSON array of strings.")
+    env_vars_to_encrypt = []
+    print(f"Processing {len(secrets_dict)} secrets from Doppler...")
 
-    encrypted_vars = []
-    print(f"Attempting to collect and encrypt {len(env_var_names)} specified environment variables...")
-
-    for name in env_var_names:
-        value = os.getenv(name)
-        if value:
-            encrypted_vars.append({"key": name, "value": value})
-            print(f"  - Found and added '{name}' for encryption.")
+    for key, value in secrets_dict.items():
+        if key in exclude_list:
+            print(f"  - Excluding '{key}' as requested.")
+            continue
+        if value is not None:
+            env_vars_to_encrypt.append({"key": key, "value": str(value)})
+            print(f"  - Adding '{key}' for encryption.")
         else:
-            print(f"  - Warning: Environment variable '{name}' was specified but not found in the env context.")
+            print(f"  - Skipping '{key}' because its value is null.")
 
-    return encrypted_vars
+    return env_vars_to_encrypt
 
 
 # --- Core Deployment Logic ---
@@ -246,27 +256,29 @@ async def main():
         image = os.getenv("INPUT_IMAGE")
         docker_compose_file = os.getenv("INPUT_DOCKER_COMPOSE_FILE")
         docker_tag = os.getenv("INPUT_DOCKER_TAG")
-        prelaunch_script_file = os.getenv("INPUT_PRELAUNCH_SCRIPT_FILE")  # This can be empty or None
+        prelaunch_script_file = os.getenv("INPUT_PRELAUNCH_SCRIPT_FILE")
         teepod_id_str = os.getenv("INPUT_TEEPOD_ID")
         vcpu = int(os.getenv("INPUT_VCPU", "2"))
         memory = int(os.getenv("INPUT_MEMORY", "8192"))
         disk_size = int(os.getenv("INPUT_DISK_SIZE", "40"))
 
-        env_vars_to_encrypt = get_env_vars_from_secrets()
+        env_vars_to_encrypt = get_env_vars_from_doppler_json()
 
         # Determine the target Teepod ID
         client = PhalaCVMClient()
         target_teepod_id = int(teepod_id_str) if teepod_id_str else None
 
-        if not target_teepod_id:
+        if not vm_id and not target_teepod_id:
             print("No Teepod ID specified, finding an available one...")
             available_teepods = client.get_available_teepods().get("nodes", [])
             if not available_teepods:
                 raise ValueError("No available Teepods found. Cannot proceed.")
             target_teepod_id = available_teepods[0]['teepod_id']
             print(f"Automatically selected available Teepod ID: {target_teepod_id}")
-        else:
+        elif target_teepod_id:
             print(f"Using specified Teepod ID: {target_teepod_id}")
+        else: # vm_id is present, teepod_id is not needed for update
+            pass
 
         # Execute deployment
         response = await deploy(
