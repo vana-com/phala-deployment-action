@@ -72,14 +72,35 @@ class PhalaCVMClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            print(f"HTTP Error Status: {e.response.status_code}")
-            print(f"Full error response: {e.response.text}")
-            try:
-                error_details = e.response.json()
-                print(f"Error details: {json.dumps(error_details, indent=2)}")
-            except (json.JSONDecodeError, AttributeError):
-                print("Error response is not valid JSON.")
-            raise
+            self._handle_error(e)
+
+    def get_vm_compose(self, vm_id: str) -> Dict[str, Any]:
+        """Gets the compose manifest of a VM to retrieve its public key."""
+        print(f"Fetching compose details for VM ID: {vm_id}")
+        response = self.client.get(f"/cvms/{vm_id}/compose")
+        try:
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            self._handle_error(e)
+
+    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any], encrypted_env: Optional[str]) -> Dict[str, Any]:
+        """Sends the request to update an existing VM."""
+        print(f"Sending update request for VM ID: {vm_id}")
+        payload = {"compose_manifest": compose_manifest}
+        if encrypted_env:
+            payload["encrypted_env"] = encrypted_env
+
+        print("Updating VM with the following payload:")
+        print(json.dumps(payload, indent=2))
+
+        response = self.client.put(f"/cvms/{vm_id}/compose", json=payload)
+        try:
+            response.raise_for_status()
+            print("VM update request accepted successfully.")
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            self._handle_error(e)
 
     def get_available_teepods(self) -> Dict[str, Any]:
         """Fetches the list of currently available teepods for deployment."""
@@ -158,45 +179,48 @@ async def deploy(
     docker_compose_content = read_file_content(docker_compose_file_path, "Docker Compose").replace('${DOCKER_TAG}', docker_tag)
     print(f"Using Docker tag: {docker_tag}")
 
-    compose_manifest = {
-        "manifest_version": 2,
-        "name": vm_name,
-        "docker_compose_file": docker_compose_content,
-        "tproxy_enabled": True,
-        "kms_enabled": True,
-        "public_sysinfo": True,
-        "public_logs": False,
-    }
-
-    # Conditionally add the pre-launch script if the path is provided
-    if prelaunch_script_path and prelaunch_script_path.strip():
-        print(f"Including pre-launch script from: {prelaunch_script_path}")
-        pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
-        compose_manifest["pre_launch_script"] = pre_launch_script_content
-    else:
-        print("No pre-launch script provided, skipping.")
-
-    vm_config = {
-        "name": vm_name,
-        "compose_manifest": compose_manifest,
-        "vcpu": vcpu,
-        "memory": memory,
-        "disk_size": disk_size,
-        "teepod_id": teepod_id,
-        "image": image,
-        "listed": False,
-    }
-
     client = PhalaCVMClient()
 
-    if vm_id:
-        print(f"Update operation for VM ID '{vm_id}' is not yet implemented in this action.")
-        set_action_output("operation", "update_skipped")
-        # In a real scenario, you would implement the update logic here.
-        return {"id": vm_id, "name": vm_name, "status": "skipped"}
+    # --- UPDATE LOGIC ---
+    if vm_id and vm_id.strip():
+        print(f"Updating existing VM with ID: {vm_id}")
+        set_action_output("operation", "update")
 
+        # For an update, we only need a minimal compose manifest.
+        update_compose_manifest = {"name": vm_name, "docker_compose_file": docker_compose_content}
+        if prelaunch_script_path and prelaunch_script_path.strip():
+            pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
+            update_compose_manifest["pre_launch_script"] = pre_launch_script_content
+
+        encrypted_env = None
+        if env_vars_to_encrypt:
+            # Fetch the VM's public key to re-encrypt env vars
+            pubkey_info = client.get_vm_compose(vm_id)
+            encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
+
+        client.update_vm_compose(
+            vm_id=vm_id,
+            compose_manifest=update_compose_manifest,
+            encrypted_env=encrypted_env
+        )
+        # Manually construct a success response as the update API response may be minimal
+        return {"id": vm_id, "name": vm_name, "status": "success"}
+
+    # --- CREATE LOGIC ---
     print(f"Creating new VM: {vm_name}")
     set_action_output("operation", "create")
+
+    compose_manifest = {
+        "manifest_version": 2, "name": vm_name, "docker_compose_file": docker_compose_content,
+        "tproxy_enabled": True, "kms_enabled": True, "public_sysinfo": True, "public_logs": False,
+    }
+    if prelaunch_script_path and prelaunch_script_path.strip():
+        compose_manifest["pre_launch_script"] = read_file_content(prelaunch_script_path, "Pre-launch script")
+
+    vm_config = {
+        "name": vm_name, "compose_manifest": compose_manifest, "vcpu": vcpu, "memory": memory,
+        "disk_size": disk_size, "teepod_id": teepod_id, "image": image, "listed": False,
+    }
 
     pubkey_info = client.get_pubkey(vm_config)
     encrypted_env = None
@@ -261,13 +285,13 @@ async def main():
 
         # Set action outputs based on the response
         final_vm_id = response.get("id")
-        if final_vm_id:
+        if final_vm_id and response.get("status") != "skipped":
             set_action_output("status", "success")
             set_action_output("vm-id", final_vm_id)
             set_action_output("vm-name", response.get("name", vm_name))
         else:
             set_action_output("status", "failed")
-            set_action_output("vm-id", "N/A")
+            set_action_output("vm-id", vm_id or "N/A")
             set_action_output("vm-name", vm_name)
 
     except Exception as e:
