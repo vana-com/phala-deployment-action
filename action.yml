@@ -56,12 +56,16 @@ inputs:
 outputs:
   vm-id:
     description: 'The ID of the created or updated CVM.'
+    value: ${{ steps.deploy.outputs.vm-id }}
   vm-name:
     description: 'The name of the CVM.'
+    value: ${{ steps.deploy.outputs.vm-name }}
   status:
     description: 'The final status of the deployment (e.g., "success", "failed").'
+    value: ${{ steps.deploy.outputs.status }}
   operation:
-    description: 'The operation performed ("create" or "update_skipped").'
+    description: 'The operation performed ("create" or "update").'
+    value: ${{ steps.deploy.outputs.operation }}
 
 runs:
   using: 'composite'
