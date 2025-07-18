@@ -82,20 +82,11 @@ runs:
         poetry install --no-root
       working-directory: ${{ github.action_path }}
 
-    - name: Prepare Environment Variables
-      id: prep_env
-      shell: bash
-      run: |
-        # This step is no longer strictly necessary with the new env var handling,
-        # but is kept for potential future use or more complex logic.
-        # It is now superseded by the INPUT_ENV_VARS_TO_ENCRYPT logic in the Python script.
-        echo "No environment variable mapping file needed for this version."
-
     - name: Run Phala Deployment Script
       id: deploy
       shell: bash
       env:
-        # Map all action inputs to environment variables for the Python script
+        # Map all action inputs to environment variables for the Python script.
         PHALA_CLOUD_API_KEY: ${{ inputs.phala-cloud-api-key }}
         INPUT_VM_NAME: ${{ inputs.vm-name || github.event.repository.name }}
         INPUT_VM_ID: ${{ inputs.vm-id }}
@@ -110,5 +101,4 @@ runs:
         INPUT_ENV_VARS_TO_ENCRYPT: ${{ inputs.env-vars-to-encrypt }}
         # The calling workflow's 'env' block will add the actual secret values here.
       run: |
-        # The Python script is part of the action's repository, so we reference it via github.action_path
-        poetry run python ${{ github.action_path }}/deploy_to_phala.py
+        python -m poetry run python ${{ github.action_path }}/deploy_to_phala.py
