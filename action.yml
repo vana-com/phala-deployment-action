@@ -61,7 +61,7 @@ outputs:
   status:
     description: 'The final status of the deployment (e.g., "success", "failed").'
   operation:
-    description: 'The operation performed ("create" or "update").'
+    description: 'The operation performed ("create" or "update_skipped").'
 
 runs:
   using: 'composite'
@@ -86,20 +86,10 @@ runs:
       id: prep_env
       shell: bash
       run: |
-        echo "Preparing environment variables..."
-        ENV_JSON='${{ inputs.env-vars-from-secrets }}'
-        ENV_FILE="action_env_mapping.env"
-        > "$ENV_FILE"
-
-        # The fromJson function ensures that the JSON is well-formed.
-        # This loop creates a mapping file where each line is TARGET_VAR_NAME=GITHUB_SECRET_NAME
-        for key in $(echo "$ENV_JSON" | jq -r 'keys[]'); do
-          value=$(echo "$ENV_JSON" | jq -r --arg k "$key" '.[$k]')
-          echo "$value=$key" >> "$ENV_FILE"
-        done
-        
-        echo "env-file-path=$ENV_FILE" >> $GITHUB_OUTPUT
-        echo "Created temporary env mapping file."
+        # This step is no longer strictly necessary with the new env var handling,
+        # but is kept for potential future use or more complex logic.
+        # It is now superseded by the INPUT_ENV_VARS_TO_ENCRYPT logic in the Python script.
+        echo "No environment variable mapping file needed for this version."
 
     - name: Run Phala Deployment Script
       id: deploy
@@ -117,9 +107,8 @@ runs:
         INPUT_VCPU: ${{ inputs.vcpu }}
         INPUT_MEMORY: ${{ inputs.memory }}
         INPUT_DISK_SIZE: ${{ inputs.disk-size }}
-        INPUT_ENV_FILE_PATH: ${{ steps.prep_env.outputs.env-file-path }}
-        # Securely pass the actual secret values into the environment for this step
-        ${{ fromJson(inputs.env-vars-from-secrets) }}
+        INPUT_ENV_VARS_TO_ENCRYPT: ${{ inputs.env-vars-to-encrypt }}
+        # The calling workflow's 'env' block will add the actual secret values here.
       run: |
         # The Python script is part of the action's repository, so we reference it via github.action_path
         poetry run python ${{ github.action_path }}/deploy_to_phala.py
