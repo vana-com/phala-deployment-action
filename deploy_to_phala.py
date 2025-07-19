@@ -98,7 +98,7 @@ class PhalaCVMClient:
         print("Updating VM with the following payload (using PATCH):")
         print(json.dumps(payload, indent=2))
 
-        response = self.client.patch(f"/cvms/{vm_id}/compose", json=payload)
+        response = self.client.put(f"/cvms/{vm_id}/compose", json=payload)
         try:
             response.raise_for_status()
             print("VM update request accepted successfully.")
@@ -194,10 +194,19 @@ async def deploy(
     # --- UPDATE LOGIC ---
     if vm_id and vm_id.strip():
         print(f"Updating existing VM with ID: {vm_id}")
+        try:
+            vm_compose = client.get_vm_compose(vm_id)
+        except httpx.HTTPStatusError as e:
+            print(f"Failed to get compose details for VM {vm_id}: {e}")
+            raise ValueError(f"Could not retrieve details for VM ID {vm_id}. Ensure it exists and is accessible.")
         set_action_output("operation", "update")
 
         # For an update, we only need a minimal compose manifest.
-        update_compose_manifest = {"name": vm_name, "docker_compose_file": docker_compose_content}
+        update_compose_manifest = {
+            "name": vm_name,
+            "docker_compose_file": docker_compose_content,
+            "public_logs": vm_compose.get("public_logs", False),
+        }
         if prelaunch_script_path and prelaunch_script_path.strip():
             pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
             update_compose_manifest["pre_launch_script"] = pre_launch_script_content
