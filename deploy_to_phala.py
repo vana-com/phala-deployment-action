@@ -95,10 +95,10 @@ class PhalaCVMClient:
         if encrypted_env:
             payload["encrypted_env"] = encrypted_env
 
-        print("Updating VM with the following payload:")
+        print("Updating VM with the following payload (using PATCH):")
         print(json.dumps(payload, indent=2))
 
-        response = self.client.put(f"/cvms/{vm_id}/compose", json=payload)
+        response = self.client.patch(f"/cvms/{vm_id}/compose", json=payload)
         try:
             response.raise_for_status()
             print("VM update request accepted successfully.")
