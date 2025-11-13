@@ -88,12 +88,14 @@ class PhalaCVMClient:
         except httpx.HTTPStatusError as e:
             self._handle_error(e)
 
-    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any], encrypted_env: Optional[str]) -> Dict[str, Any]:
+    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any], encrypted_env: Optional[str], allowed_envs: Optional[List[str]] = None) -> Dict[str, Any]:
         """Sends the request to update an existing VM."""
         print(f"Sending update request for VM ID: {vm_id}")
         payload = {"compose_manifest": compose_manifest}
         if encrypted_env:
             payload["encrypted_env"] = encrypted_env
+        if allowed_envs:
+            payload["allowed_envs"] = allowed_envs
 
         print("Updating VM with the following payload (using PATCH):")
         print(json.dumps(payload, indent=2))
@@ -170,6 +172,13 @@ def get_env_vars_from_doppler_json() -> List[Dict[str, str]]:
 
     return env_vars_to_encrypt
 
+def get_allowed_envs(env_vars_to_encrypt: List[Dict[str, str]]) -> List[str]:
+    """
+    Extracts the list of environment variable keys for the allowed_envs field.
+    Required for OS image version >= 0.5.0 when using environment variables.
+    """
+    return [var["key"] for var in env_vars_to_encrypt]
+
 
 # --- Core Deployment Logic ---
 async def deploy(
@@ -212,15 +221,18 @@ async def deploy(
             update_compose_manifest["pre_launch_script"] = pre_launch_script_content
 
         encrypted_env = None
+        allowed_envs = None
         if env_vars_to_encrypt:
             # Fetch the VM's public key to re-encrypt env vars
             pubkey_info = client.get_vm_compose(vm_id)
             encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
+            allowed_envs = get_allowed_envs(env_vars_to_encrypt)
 
         client.update_vm_compose(
             vm_id=vm_id,
             compose_manifest=update_compose_manifest,
-            encrypted_env=encrypted_env
+            encrypted_env=encrypted_env,
+            allowed_envs=allowed_envs
         )
         # Manually construct a success response as the update API response may be minimal
         return {"id": vm_id, "name": vm_name, "status": "success"}
@@ -243,12 +255,16 @@ async def deploy(
 
     pubkey_info = client.get_pubkey(vm_config)
     encrypted_env = None
+    allowed_envs = None
     if env_vars_to_encrypt:
         encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["app_env_encrypt_pubkey"])
+        allowed_envs = get_allowed_envs(env_vars_to_encrypt)
 
     create_payload = {**vm_config, "app_id_salt": pubkey_info["app_id_salt"]}
     if encrypted_env:
         create_payload["encrypted_env"] = encrypted_env
+    if allowed_envs:
+        create_payload["allowed_envs"] = allowed_envs
 
     response = client.create_vm(create_payload)
     print("VM creation initiated successfully.")
