@@ -88,16 +88,14 @@ class PhalaCVMClient:
         except httpx.HTTPStatusError as e:
             self._handle_error(e)
 
-    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any], encrypted_env: Optional[str], allowed_envs: Optional[List[str]] = None) -> Dict[str, Any]:
+    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any]) -> Dict[str, Any]:
         """Sends the request to update an existing VM."""
         print(f"Sending update request for VM ID: {vm_id}")
-        payload = {"compose_manifest": compose_manifest}
-        if encrypted_env:
-            payload["encrypted_env"] = encrypted_env
-        if allowed_envs:
-            payload["allowed_envs"] = allowed_envs
+        
+        # The entire payload is now just the compose_manifest object
+        payload = compose_manifest
 
-        print("Updating VM with the following payload (using PATCH):")
+        print("Updating VM with the following payload (using PUT):")
         print(json.dumps(payload, indent=2))
 
         response = self.client.put(f"/cvms/{vm_id}/compose", json=payload)
@@ -220,19 +218,16 @@ async def deploy(
             pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
             update_compose_manifest["pre_launch_script"] = pre_launch_script_content
 
-        encrypted_env = None
-        allowed_envs = None
+        # If there are env vars, add them directly to the manifest dictionary
         if env_vars_to_encrypt:
             # Fetch the VM's public key to re-encrypt env vars
             pubkey_info = client.get_vm_compose(vm_id)
-            encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
-            allowed_envs = get_allowed_envs(env_vars_to_encrypt)
+            update_compose_manifest["encrypted_env"] = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
+            update_compose_manifest["allowed_envs"] = get_allowed_envs(env_vars_to_encrypt)
 
         client.update_vm_compose(
             vm_id=vm_id,
-            compose_manifest=update_compose_manifest,
-            encrypted_env=encrypted_env,
-            allowed_envs=allowed_envs
+            compose_manifest=update_compose_manifest
         )
         # Manually construct a success response as the update API response may be minimal
         return {"id": vm_id, "name": vm_name, "status": "success"}
