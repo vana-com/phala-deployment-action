@@ -91,9 +91,9 @@ class PhalaCVMClient:
     def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any]) -> Dict[str, Any]:
         """Sends the request to update an existing VM."""
         print(f"Sending update request for VM ID: {vm_id}")
-        
-        # The entire payload is now just the compose_manifest object
-        payload = compose_manifest
+
+        # Wrap compose_manifest in the expected API structure
+        payload = {"compose_manifest": compose_manifest}
 
         print("Updating VM with the following payload (using PUT):")
         print(json.dumps(payload, indent=2))
