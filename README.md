@@ -31,16 +31,12 @@ jobs:
           vm-name: 'my-production-app'
           docker-compose-file: 'docker-compose.prod.yml'
           docker-tag: ${{ github.sha }}
-          # Optional: Pass secrets as environment variables
-          env-vars-to-encrypt: |
-            [
-              "API_KEY",
-              "DATABASE_URL"
-            ]
-        env:
-          # Define the secrets that env-vars-to-encrypt lists
-          API_KEY: ${{ secrets.MY_API_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Pass secrets as a JSON object
+          doppler-secrets-json: |
+            {
+              "API_KEY": "${{ secrets.MY_API_KEY }}",
+              "DATABASE_URL": "${{ secrets.DATABASE_URL }}"
+            }
 
       - name: Display Deployment Output
         run: |
@@ -63,7 +59,10 @@ jobs:
 | `vcpu`                    | Number of virtual CPUs for the CVM.                                                                     | `false`  | `2`                        |
 | `memory`                  | Memory in MB for the CVM.                                                                               | `false`  | `8192`                     |
 | `disk-size`               | Disk size in GB for the CVM.                                                                            | `false`  | `40`                       |
-| `env-vars-to-encrypt`     | A JSON array of environment variable names to be encrypted and passed to the CVM.                         | `false`  | `[]`                       |
+| `doppler-secrets-json`    | A JSON object containing all secrets to be encrypted and passed to the CVM.                             | `true`   |                            |
+| `exclude-env-vars`        | A JSON array of secret names from `doppler-secrets-json` to exclude from CVM encryption.                | `false`  | `[]`                       |
+
+**Note:** The action automatically extracts the environment variable names from `doppler-secrets-json` (excluding those in `exclude-env-vars`) and includes them in the `allowed_envs` field required by Phala Cloud API v0.5.0+. This ensures compatibility with newer OS images without requiring additional configuration.
 
 ## Outputs
 

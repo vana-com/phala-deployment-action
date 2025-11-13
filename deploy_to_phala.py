@@ -88,14 +88,14 @@ class PhalaCVMClient:
         except httpx.HTTPStatusError as e:
             self._handle_error(e)
 
-    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any], encrypted_env: Optional[str]) -> Dict[str, Any]:
+    def update_vm_compose(self, vm_id: str, compose_manifest: Dict[str, Any]) -> Dict[str, Any]:
         """Sends the request to update an existing VM."""
         print(f"Sending update request for VM ID: {vm_id}")
-        payload = {"compose_manifest": compose_manifest}
-        if encrypted_env:
-            payload["encrypted_env"] = encrypted_env
 
-        print("Updating VM with the following payload (using PATCH):")
+        # Wrap compose_manifest in the expected API structure
+        payload = {"compose_manifest": compose_manifest}
+
+        print("Updating VM with the following payload (using PUT):")
         print(json.dumps(payload, indent=2))
 
         response = self.client.put(f"/cvms/{vm_id}/compose", json=payload)
@@ -170,6 +170,13 @@ def get_env_vars_from_doppler_json() -> List[Dict[str, str]]:
 
     return env_vars_to_encrypt
 
+def get_allowed_envs(env_vars_to_encrypt: List[Dict[str, str]]) -> List[str]:
+    """
+    Extracts the list of environment variable keys for the allowed_envs field.
+    Required for OS image version >= 0.5.0 when using environment variables.
+    """
+    return [var["key"] for var in env_vars_to_encrypt]
+
 
 # --- Core Deployment Logic ---
 async def deploy(
@@ -184,6 +191,7 @@ async def deploy(
         memory: int,
         disk_size: int,
         env_vars_to_encrypt: List[Dict[str, str]],
+        public_logs: bool = False,
 ) -> Dict[str, Any]:
     """Handles the main deployment logic for creating or updating a VM."""
     docker_compose_content = read_file_content(docker_compose_file_path, "Docker Compose").replace('${DOCKER_TAG}', docker_tag)
@@ -202,25 +210,26 @@ async def deploy(
         set_action_output("operation", "update")
 
         # For an update, we only need a minimal compose manifest.
+        # NOTE: Phala Cloud does not allow changing visibility settings during updates.
+        # The "public_logs" field must be omitted from update requests.
         update_compose_manifest = {
             "name": vm_name,
             "docker_compose_file": docker_compose_content,
-            "public_logs": vm_compose.get("public_logs", False),
         }
         if prelaunch_script_path and prelaunch_script_path.strip():
             pre_launch_script_content = read_file_content(prelaunch_script_path, "Pre-launch script")
             update_compose_manifest["pre_launch_script"] = pre_launch_script_content
 
-        encrypted_env = None
+        # If there are env vars, add them directly to the manifest dictionary
         if env_vars_to_encrypt:
             # Fetch the VM's public key to re-encrypt env vars
             pubkey_info = client.get_vm_compose(vm_id)
-            encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
+            update_compose_manifest["encrypted_env"] = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["env_pubkey"])
+            update_compose_manifest["allowed_envs"] = get_allowed_envs(env_vars_to_encrypt)
 
         client.update_vm_compose(
             vm_id=vm_id,
-            compose_manifest=update_compose_manifest,
-            encrypted_env=encrypted_env
+            compose_manifest=update_compose_manifest
         )
         # Manually construct a success response as the update API response may be minimal
         return {"id": vm_id, "name": vm_name, "status": "success"}
@@ -231,7 +240,7 @@ async def deploy(
 
     compose_manifest = {
         "manifest_version": 2, "name": vm_name, "docker_compose_file": docker_compose_content,
-        "tproxy_enabled": True, "kms_enabled": True, "public_sysinfo": True, "public_logs": False,
+        "tproxy_enabled": True, "kms_enabled": True, "public_sysinfo": True, "public_logs": public_logs,
     }
     if prelaunch_script_path and prelaunch_script_path.strip():
         compose_manifest["pre_launch_script"] = read_file_content(prelaunch_script_path, "Pre-launch script")
@@ -243,12 +252,16 @@ async def deploy(
 
     pubkey_info = client.get_pubkey(vm_config)
     encrypted_env = None
+    allowed_envs = None
     if env_vars_to_encrypt:
         encrypted_env = encrypt_env_vars(env_vars_to_encrypt, pubkey_info["app_env_encrypt_pubkey"])
+        allowed_envs = get_allowed_envs(env_vars_to_encrypt)
 
     create_payload = {**vm_config, "app_id_salt": pubkey_info["app_id_salt"]}
     if encrypted_env:
         create_payload["encrypted_env"] = encrypted_env
+    if allowed_envs:
+        create_payload["allowed_envs"] = allowed_envs
 
     response = client.create_vm(create_payload)
     print("VM creation initiated successfully.")
@@ -270,6 +283,7 @@ async def main():
         vcpu = int(os.getenv("INPUT_VCPU", "2"))
         memory = int(os.getenv("INPUT_MEMORY", "8192"))
         disk_size = int(os.getenv("INPUT_DISK_SIZE", "40"))
+        public_logs = os.getenv("INPUT_PUBLIC_LOGS", "false").lower() == "true"
 
         env_vars_to_encrypt = get_env_vars_from_doppler_json()
 
@@ -302,6 +316,7 @@ async def main():
             memory=memory,
             disk_size=disk_size,
             env_vars_to_encrypt=env_vars_to_encrypt,
+            public_logs=public_logs,
         )
 
         # Set action outputs based on the response
