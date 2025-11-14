@@ -191,7 +191,6 @@ async def deploy(
         memory: int,
         disk_size: int,
         env_vars_to_encrypt: List[Dict[str, str]],
-        public_logs: bool = False,
 ) -> Dict[str, Any]:
     """Handles the main deployment logic for creating or updating a VM."""
     docker_compose_content = read_file_content(docker_compose_file_path, "Docker Compose").replace('${DOCKER_TAG}', docker_tag)
@@ -210,8 +209,6 @@ async def deploy(
         set_action_output("operation", "update")
 
         # For an update, we only need a minimal compose manifest.
-        # NOTE: Phala Cloud does not allow changing visibility settings during updates.
-        # The "public_logs" field must be omitted from update requests.
         update_compose_manifest = {
             "name": vm_name,
             "docker_compose_file": docker_compose_content,
@@ -240,7 +237,7 @@ async def deploy(
 
     compose_manifest = {
         "manifest_version": 2, "name": vm_name, "docker_compose_file": docker_compose_content,
-        "tproxy_enabled": True, "kms_enabled": True, "public_sysinfo": True, "public_logs": public_logs,
+        "tproxy_enabled": True, "kms_enabled": True, "public_sysinfo": True,
     }
     if prelaunch_script_path and prelaunch_script_path.strip():
         compose_manifest["pre_launch_script"] = read_file_content(prelaunch_script_path, "Pre-launch script")
@@ -283,7 +280,6 @@ async def main():
         vcpu = int(os.getenv("INPUT_VCPU", "2"))
         memory = int(os.getenv("INPUT_MEMORY", "8192"))
         disk_size = int(os.getenv("INPUT_DISK_SIZE", "40"))
-        public_logs = os.getenv("INPUT_PUBLIC_LOGS", "false").lower() == "true"
 
         env_vars_to_encrypt = get_env_vars_from_doppler_json()
 
@@ -316,7 +312,6 @@ async def main():
             memory=memory,
             disk_size=disk_size,
             env_vars_to_encrypt=env_vars_to_encrypt,
-            public_logs=public_logs,
         )
 
         # Set action outputs based on the response
